@@ -15,6 +15,7 @@
 #include <linux/icmp.h>
 #include <linux/netfilter_ipv4.h>		// has the netfilter hook's structure
 #include <linux/init.h>
+#include <linux/cred.h>
 
 #include "minifw.h"     
 
@@ -22,7 +23,7 @@
 #define MAX_RULES 			256
 #define RULE_DOES_NOT_MATCH 1
 #define RULE_MATCHES      	0
-#define UID_MAX        		256
+#define UID_MAX        		100
 
 //#define __KERNEL__
 //#define MODULE
@@ -86,7 +87,7 @@ int init_minifw_read_write_module(void) {
 				.write = minifw_write,
 		};
 
-		proc_entry = proc_create("minifw", 0646, NULL, &my_fops);
+		proc_entry = proc_create("minifw", 0777, NULL, &my_fops);
 
         if(!proc_entry){
 			ret = -ENOMEM;
@@ -173,7 +174,7 @@ ssize_t minifw_write(struct file *filp, const char __user  *buff, size_t len, lo
 
 	// check the access rights of the user
 	if(Check_Permission(my_ipt)) {
-		printk(KERN_INFO "minifw: %d UID doesn't have sufficient rights to access minifw\n", current->pid);
+		printk(KERN_INFO "minifw: %d UID doesn't have sufficient rights to access minifw\n", current_uid());
 		return -EFAULT;	
 	}
 	
@@ -187,7 +188,7 @@ ssize_t minifw_write(struct file *filp, const char __user  *buff, size_t len, lo
 	}
 	// users who aren't super-user shouldn't be able to change the access rights of minifw
 	else if(my_ipt->action == ALLOW_ACCESS) {
-		if (current->pid != 0)
+		if (current_uid().val != 0)
 			printk(KERN_INFO "minifw: only the super user can change the access permissions\n");
 		else {			
 			printk(KERN_INFO "minifw: UID %d gained access rights\n", my_ipt->uid);
@@ -197,7 +198,7 @@ ssize_t minifw_write(struct file *filp, const char __user  *buff, size_t len, lo
 		return 0;
 	}
 	else if(my_ipt->action == REMOVE_ACCESS) {
-		if (current->pid != 0)
+		if (current_uid().val != 0)
 			printk(KERN_INFO "minifw: only the super user can change the access permissions\n");
 		else {			
 			if (my_ipt->uid == 0)		// the super user shouldn't be able to remove his own right
@@ -294,9 +295,9 @@ unsigned int minifw_outbound_filter(void *priv,
 }
 
 // check for access right for the uid passed through my_ipt
-int Check_Permission(const my_iptable *my_ipt) {	
+int Check_Permission(const my_iptable *my_ipt) {
 	//printk(KERN_INFO "minifw: Checking the access right of UID %d, Index: %d\n", my_ipt->uid, my_ipt->uid % UID_MAX);
-	if (allowed_users[(current->pid % UID_MAX)]) {	
+	if (allowed_users[(current_uid().val % UID_MAX)]) {	
 		printk(KERN_INFO "minifw: UID %d is allowed to access minifw\n", my_ipt->uid);
 		return 0;
 	}
