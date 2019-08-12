@@ -41,12 +41,22 @@ static unsigned char	num_of_rules;
 static unsigned int 	rule_index;
 static unsigned int 	next_rule_ctr;
 
-unsigned int minifw_inbound_filter(unsigned int hooknum, struct sk_buff *skb, const struct net_device *in,
-									const struct net_device *out, int (*okfn)(struct sk_buff *));
+unsigned int minifw_inbound_filter(void *priv,
+			       struct sk_buff *skb,
+			       const struct nf_hook_state *state);
+
+//typedef unsigned int nf_hookfn(const struct nf_hook_ops *ops,
+//                               struct sk_buff *skb,
+//                               const struct nf_hook_state *state);
+
+
 unsigned int minifw_outbound_filter(unsigned int hooknum, struct sk_buff *skb, const struct net_device *in,
 									const struct net_device *out, int (*okfn)(struct sk_buff *));
-ssize_t minifw_write(struct file *filp, const char __user *buff, unsigned long len, void *data);
-ssize_t minifw_read( char *page, char **start, off_t off, int count, int *eof, void *data);
+ssize_t minifw_write(struct file *filp, const char __user  *buff, size_t len, loff_t *ppos);
+// struct file *file, const char __user *ubuf,size_t count, loff_t *ppos
+
+// ssize_t minifw_read( char *page, char **start, off_t off, int count, int *eof, void *data);
+ssize_t minifw_read(struct file *file, char *page, size_t count,loff_t *offp );
 
 // function prototypes
 int Check_Rule(struct sk_buff *skb, my_iptable *my_ipt);
@@ -66,26 +76,57 @@ int init_minifw_read_write_module(void) {
 		ret = -ENOMEM;
 	else {
 		memset((char *)my_ipt, 0, sizeof(my_iptable));				// owner-group-others
-		proc_entry = create_proc_entry("minifw", 0646, NULL);		// rw-r--rw-, the owner of this entry would have read/write permissions
-		if(proc_entry == NULL) {
+
+
+		static struct file_operations my_fops={
+				.owner = THIS_MODULE,
+				.read = minifw_read,
+				.write = minifw_write,
+		};
+
+		proc_entry = proc_create("minifw", 0646, NULL, &my_fops);
+
+        if(!proc_entry){
 			ret = -ENOMEM;
-			vfree(my_ipt);
+ 			vfree(my_ipt);
 			printk(KERN_INFO "minifw: couldn't create proc entry\n");
-		}		
-		else {
-			printk(KERN_INFO "minifw: minifw proc entry succesfully registered\n");
+        }else{
 			rule_index = 0;
 			next_rule_ctr = 0;
 			num_of_rules = 0;
 			memset(allowed_users, 0, UID_MAX * sizeof(unsigned char));
 			allowed_users[0] = 1;      				// super user with uid 0 should have access to the iptables by default, hence set his flag to 1
-	
-			proc_entry->read_proc = minifw_read;
-			proc_entry->write_proc = minifw_write;
-			proc_entry->owner = THIS_MODULE;
 			printk(KERN_INFO "minifw: minifw read_write module loaded successfully\n");	
-		}		
-	}
+        }
+
+
+
+
+
+
+		// proc_entry = create_proc_entry("minifw", 0646, NULL);		// rw-r--rw-, the owner of this entry would have read/write permissions
+		// if(proc_entry == NULL) {
+		// 	ret = -ENOMEM;
+		// 	vfree(my_ipt);
+		// 	printk(KERN_INFO "minifw: couldn't create proc entry\n");
+		// }		
+		// else {
+		// 	printk(KERN_INFO "minifw: minifw proc entry succesfully registered\n");
+		// 	rule_index = 0;
+		// 	next_rule_ctr = 0;
+		// 	num_of_rules = 0;
+		// 	memset(allowed_users, 0, UID_MAX * sizeof(unsigned char));
+		// 	allowed_users[0] = 1;      				// super user with uid 0 should have access to the iptables by default, hence set his flag to 1
+	
+		// 	proc_entry->read_proc = minifw_read;
+		// 	proc_entry->write_proc = minifw_write;
+		// 	proc_entry->owner = THIS_MODULE;
+		// 	printk(KERN_INFO "minifw: minifw read_write module loaded successfully\n");	
+		// }	
+
+
+
+	// }
 	return 0;
 }
 
@@ -183,6 +224,7 @@ int minifw_read(char *page, char **start, off_t off, int count, int *eof, void *
 		memcpy(page, my_ipt, len);
 		return 0;
 	} 	
+
 	memcpy(my_ipt, minifw_rules_table + next_rule_ctr, len);				// copy the rule at next_rule_ctr to my_ipt struct,
 	my_ipt->rule_index = next_rule_ctr;										// will be passed to user-space read through "page" buffer
 
@@ -202,9 +244,14 @@ int minifw_read(char *page, char **start, off_t off, int count, int *eof, void *
 	return len;
 }
 
+//typedef unsigned int nf_hookfn(const struct nf_hook_ops *ops,
+//                               struct sk_buff *skb,
+//                               const struct nf_hook_state *state);
+
 // hook function for filtering inbound packets 
-unsigned int minifw_inbound_filter(unsigned int hooknum, struct sk_buff *skb, const struct net_device *in,
-									const struct net_device *out, int (*okfn)(struct sk_buff *))
+unsigned int minifw_inbound_filter(void *priv,
+			       struct sk_buff *skb,
+			       const struct nf_hook_state *state)
 {
 	int index = 0;
 	int action = 0;	
