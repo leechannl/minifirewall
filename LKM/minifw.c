@@ -15,10 +15,11 @@
 #include <linux/icmp.h>
 #include <linux/netfilter_ipv4.h>		// has the netfilter hook's structure
 
+
 #include "minifw.h"     
 
 #define MAX_RULE_LENGTH 	PAGE_SIZE
-#define MAX_RULES 			100
+#define MAX_RULES 			256
 #define RULE_DOES_NOT_MATCH 1
 #define RULE_MATCHES      	0
 #define UID_MAX        		256
@@ -50,8 +51,9 @@ unsigned int minifw_inbound_filter(void *priv,
 //                               const struct nf_hook_state *state);
 
 
-unsigned int minifw_outbound_filter(unsigned int hooknum, struct sk_buff *skb, const struct net_device *in,
-									const struct net_device *out, int (*okfn)(struct sk_buff *));
+unsigned int minifw_outbound_filter(void *priv,
+			       struct sk_buff *skb,
+			       const struct nf_hook_state *state);
 ssize_t minifw_write(struct file *filp, const char __user  *buff, size_t len, loff_t *ppos);
 // struct file *file, const char __user *ubuf,size_t count, loff_t *ppos
 
@@ -126,7 +128,7 @@ int init_minifw_read_write_module(void) {
 
 
 
-	// }
+	}
 	return 0;
 }
 
@@ -135,13 +137,13 @@ int init_rule_match_module(void) {
 	nfho_in.hooknum 	= NF_INET_LOCAL_IN;				// netfilter hook for local machine bounded ipv4 packets
 	nfho_in.pf			= PF_INET;						
 	nfho_in.priority 	= NF_IP_PRI_FIRST;				// we set its priority higher than other hooks
-	nf_register_hook(&nfho_in);
+	nf_register_net_hook(&init_net, &nfho_in);
 	
 	nfho_out.hook		= minifw_outbound_filter;		// filter for outbound packets
 	nfho_out.hooknum	= NF_INET_LOCAL_OUT;
 	nfho_out.pf			= PF_INET;
 	nfho_out.priority	= NF_IP_PRI_FIRST;
-	nf_register_hook(&nfho_out);
+	nf_register_net_hook(&init_net, &nfho_out);
 
 	printk(KERN_INFO "minifw: rule match module loaded\n");
 	return 0;	
@@ -153,7 +155,7 @@ int my_init_module(void) {
 	return 0;
 }
 
-ssize_t minifw_write(struct file *filp, const char __user *buff, unsigned long len, void *data) {
+ssize_t minifw_write(struct file *filp, const char __user  *buff, size_t len, loff_t *ppos) {
 	int rules_remaining = MAX_RULES - rule_index + 1;		// rules_remaining limits: [0, MAX_RULES]
 	int num = len / sizeof(my_iptable);						// get the byte index where the next rule should be written	
 	memset(my_ipt, 0, sizeof(my_iptable));					// find the index within the available "len" within the 
@@ -171,7 +173,7 @@ ssize_t minifw_write(struct file *filp, const char __user *buff, unsigned long l
 
 	// check the access rights of the user
 	if(Check_Permission(my_ipt)) {
-		printk(KERN_INFO "minifw: %d UID doesn't have sufficient rights to access minifw\n", current->uid);
+		printk(KERN_INFO "minifw: %d UID doesn't have sufficient rights to access minifw\n", current->pid);
 		return -EFAULT;	
 	}
 	
@@ -185,7 +187,7 @@ ssize_t minifw_write(struct file *filp, const char __user *buff, unsigned long l
 	}
 	// users who aren't super-user shouldn't be able to change the access rights of minifw
 	else if(my_ipt->action == ALLOW_ACCESS) {
-		if (current->uid != 0)
+		if (current->pid != 0)
 			printk(KERN_INFO "minifw: only the super user can change the access permissions\n");
 		else {			
 			printk(KERN_INFO "minifw: UID %d gained access rights\n", my_ipt->uid);
@@ -195,7 +197,7 @@ ssize_t minifw_write(struct file *filp, const char __user *buff, unsigned long l
 		return 0;
 	}
 	else if(my_ipt->action == REMOVE_ACCESS) {
-		if (current->uid != 0)
+		if (current->pid != 0)
 			printk(KERN_INFO "minifw: only the super user can change the access permissions\n");
 		else {			
 			if (my_ipt->uid == 0)		// the super user shouldn't be able to remove his own right
@@ -214,7 +216,7 @@ ssize_t minifw_write(struct file *filp, const char __user *buff, unsigned long l
 	return len;	
 }
 
-int minifw_read(char *page, char **start, off_t off, int count, int *eof, void *data) {
+ssize_t minifw_read(struct file *file, char *page, size_t count,loff_t *offp ) {
 	int len;
 	printk(KERN_INFO "minifw: Total number of rules: %d\n", num_of_rules);
 
@@ -271,8 +273,9 @@ unsigned int minifw_inbound_filter(void *priv,
 }
 
 // hook function for filtering outbound packets
-unsigned int minifw_outbound_filter(unsigned int hooknum, struct sk_buff *skb, const struct net_device *in,
-									const struct net_device *out, int (*okfn)(struct sk_buff *)) 
+unsigned int minifw_outbound_filter(void *priv,
+			       struct sk_buff *skb,
+			       const struct nf_hook_state *state) 
 {
 	int index = 0;
 	int action = 0;	
@@ -293,7 +296,7 @@ unsigned int minifw_outbound_filter(unsigned int hooknum, struct sk_buff *skb, c
 // check for access right for the uid passed through my_ipt
 int Check_Permission(const my_iptable *my_ipt) {	
 	//printk(KERN_INFO "minifw: Checking the access right of UID %d, Index: %d\n", my_ipt->uid, my_ipt->uid % UID_MAX);
-	if (allowed_users[(current->uid % UID_MAX)]) {	
+	if (allowed_users[(current->pid % UID_MAX)]) {	
 		printk(KERN_INFO "minifw: UID %d is allowed to access minifw\n", my_ipt->uid);
 		return 0;
 	}
@@ -458,8 +461,8 @@ void cleanup_minifw_read_write_module(void) {
 }
 
 void cleanup_rule_match_module(void) {
-	nf_unregister_hook(&nfho_in);
-	nf_unregister_hook(&nfho_out);
+	nf_unregister_net_hook(&init_net, &nfho_in);
+	nf_unregister_net_hook(&init_net, &nfho_out);
 	printk(KERN_INFO "minifw: minifw rule match module unloaded\n");
 }
 
