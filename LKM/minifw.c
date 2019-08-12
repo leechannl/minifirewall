@@ -14,7 +14,7 @@
 #include <linux/udp.h>
 #include <linux/icmp.h>
 #include <linux/netfilter_ipv4.h>		// has the netfilter hook's structure
-
+#include <linux/init.h>
 
 #include "minifw.h"     
 
