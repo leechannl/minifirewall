@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "ethernet.h": "c",
+        "kernel.h": "c",
+        "module.h": "c"
+    }
+}
